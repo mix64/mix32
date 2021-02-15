@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+
+from ctypes import *
+from io import BytesIO
+from glob import glob
+
+"""
+SECTOR_SIZE = 512
+DISK_SIZE   = 4MB   (4*1024*1024)
+SECTOR_NUM  = 8192  (4*1024*1024/512)
+MGR_NUM     = 2     (8192/8/512)
+0 : boot block
+1 : super block {
+        u32 disksize
+        u16 mgr
+        u16 mgr_size
+        u32 kernel
+        u32 rootdir
+    }
+(mgr) ~ (mgr + mgr_size - 1): free block manager
+        1bit manages 1sector. 
+        When a disk size is 4MB, we can manage it with 2sectors.
+(mgr + mgr_size) ~ : data block
+"""
+
+class SuperBlock(Structure):
+    _fields_ = (
+        ('size', c_uint32),
+        ('mgr', c_uint16),
+        ('mgr_size', c_uint16),
+        ('kernel', c_uint32),
+        ('rootdir', c_uint32),
+        ('_pad_', c_uint32 * 124) 
+    )
+
+def setup_superblock():
+    sb = SuperBlock()
+    sb.size = 4 * 1024 * 1024
+    sb.mgr = 2
+    sb.mgr_size = 2
+    sb.rootdir = 4
+    sb.kernel = 5
+    return sb
+
+def main():
+    fs = BytesIO()
+
+    # write bootblock
+    bootblock = open('build/x86-bootblock', 'rb').read()
+    fs.write(bootblock)
+
+    # write superblock
+    sb = setup_superblock()
+    fs.write(sb)
+
+    # write mgr block
+    fs.write(b'\x00' * 512 * sb.mgr_size)
+
+    # write rootdir
+    fs.write(b'\x00' * 512)
+
+    # write kernel
+    kernel = open('build/kernel.elf', 'rb').read()
+    kernel_size = (len(kernel) + 511) // 512
+    kernel_pad = b'\x00' * (kernel_size * 512 - len(kernel))
+    fs.write(kernel)
+    fs.write(kernel_pad)
+
+    # write free space
+    pad_size = sb.size - (kernel_size * 512) - (sb.mgr_size * 512) - 512
+    fs.write(b'\x00' * pad_size)
+
+    # write out
+    open('mix32-x86.img', 'wb').write(fs.getvalue())
+
+if __name__ == '__main__':
+    main()
